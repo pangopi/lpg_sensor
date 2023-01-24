@@ -24,10 +24,11 @@
 #define NOTE_D5 587
 #define NOTE_E5 659
 
-bool alarmLPG = false;
-bool alarmLPG_latch = false;
-bool err_no_sensor = false;
-bool lower_threshold = false;
+bool alarmLPG = false;          // Currently detecting LPG
+bool alarmLPG_latch = false;    // Alarm in latched state
+bool err_no_sensor = false;     // Gas sensor detected
+bool lower_threshold = false;   // Bool lower LPG threshold reached
+bool alarm_silenced = false;    // Alarm silenced state
 unsigned long alarm_time = 0UL; // millis for storing when gas first detected
 const unsigned long alarm_timeout = 8 * 3600e3; // 8 hours
 //  The lower explosive limit for LPG is 1900 ppm for butane, and
@@ -336,31 +337,37 @@ void loop() {
   button_state = digitalRead(BUTTON_PIN);
 
   if (button_state != last_button_state) {
-    // Button has been pressed
+    // Button has been pressed, start debouncing
     last_debounce_time = millis();
   }
 
   if (millis() - last_debounce_time < debounce_delay && button_state == LOW) {
+    // Reset the debounce
     last_button_state = button_state;
     last_debounce_time = 0;
-    // Reset button is pressed
     #ifndef SERIAL_DEBUG_DISABLED
     Serial.println("Reset Button Pressed");
     #endif
-    if (alarmLPG_latch == true && alarmLPG == false) {
-      // Alarm is still active but no current gas detected, reset the alarm
+    if (alarmLPG_latch && !alarmLPG) {
+      // Alarm is latched (still active) but no current gas detected, reset the
+      // alarm
       alarmLPG_latch = false;
+      alarm_silenced = false;
       alarm_time = 0UL;
       #ifndef SERIAL_DEBUG_DISABLED
-      Serial.println("Alarm cancelled by user");
+      Serial.println("Alarm reset by user");
       #endif
-    } else if (alarmLPG_latch == true && alarmLPG == true) {
+    } else if (alarmLPG_latch && alarmLPG) {
       // Alarm is active and there is currently gas detected
-      // Silence the alarm as if an alarm timehout has occurred
-      alarm_time = millis() - alarm_timeout - 1;
+      // Silence the alarm
+      alarm_silenced = true;
       #ifndef SERIAL_DEBUG_DISABLED
       Serial.println("Alarm silenced by user");
       #endif
+    } else if (lower_threshold) {
+      // Lower threshold alarm is sounding
+      // Silence the alarm
+      alarm_silenced = true;
     } else {
       // There is no current alarm, restart device
       // First double check there's no LPG reading
@@ -499,12 +506,11 @@ void loop() {
       #endif
 
       greenLED.setLow();
-      redLED.setInterval(500, 1000);
-      buzzer.setInterval(500, 1000);
-
-      // TODO: Edge case, sensor gets disconnected when lpg alarm already sounding
-
-    } else if (alarmLPG == true || alarmLPG_latch == true) {
+      redLED.setHigh();
+      buzzer.setInterval(150, 4000);
+    }
+    
+    if (alarmLPG == true || alarmLPG_latch == true) {
       // Sound alarm if gas threshold is exceeded
 
       redLED.setHigh();
@@ -528,8 +534,12 @@ void loop() {
         Serial.println("LPG alarm latched");
         #endif
       } else if (millis() - alarm_time > alarm_timeout) {
-        // Alarm has been going for longer then the timeout so make it beep at a
-        // very slow rate and keep the red LED on
+        // Alarm has been going for longer then the timeout, silence it
+      }
+
+      if (alarm_silenced) {
+        // Alarm has been silenced. Make it beep at very slow rate and keep the
+        // red LED on
         buzzer.setInterval(1000, 90e3); // Beep every 90 seconds
         #ifndef SERIAL_DEBUG_DISABLED
         Serial.println("LPG alarm silenced");
@@ -546,7 +556,11 @@ void loop() {
 
       redLED.setInterval(150, 2000);
       greenLED.setHigh();
-      buzzer.setInterval(150, 2000);
+      if (alarm_silenced) {
+        buzzer.setInterval(150, 90e3);
+      } else {
+        buzzer.setInterval(150, 3000);
+      }
     } else if (errDHT11 == true) {
       // Only give the error that the temp/hum sensor isn't working when there
       // is no LPG detected. Otherwise the LPG alarm is sounded.
@@ -554,8 +568,8 @@ void loop() {
       Serial.println("Error: DHT sensor not found");
       #endif
 
-      greenLED.setInterval(1000, 50);
-      redLED.setInterval(150, 4900);
+      greenLED.setHigh();
+      redLED.setPulse(150, 3000);
       //buzzer.setInterval(50, 5000);
     } else {
       // No alarms or anything just turn on the green light
