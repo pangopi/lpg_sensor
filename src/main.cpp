@@ -12,26 +12,28 @@
 #define GREEN_LED 5
 #define RED_LED 4
 #define BUZZER_PIN 3
+#define BUTTON_PIN 7
 #define MQ6_PIN A1
-#define NPN_PIN 7
 #define DHT_PIN 6
 #define DIGITAL_OUT 12
 #define WARMUP_TIME_MS 90e3
 
-boolean alarmLPG = false;
-boolean err_no_sensor = false;
-boolean lower_threshold = false;
+bool alarmLPG = false;
+bool alarmLPG_latch = false;
+bool err_no_sensor = false;
+bool lower_threshold = false;
+unsigned long alarm_time = 0UL; // millis for storing when gas first detected
+unsigned long alarm_timeout = 8 * 3600e3; // 8 hours
 //  The lower explosive limit for LPG is 1900 ppm for butane, and
 //  2000 ppm for propane.
 const unsigned int LPG_threshold = 1900;
 // Set a lower thershold where the alarm doesn't sound but a chirp is given
-const unsigned int LPG_lower_threshold = 400;
+const unsigned int LPG_lower_threshold = 500;
 float RL = 20.0;  //  load resistor value in k ohms
 float Ro = 10.0;  //  default value 10 k ohms.  Revised during calibration.
 const float Ro_clean_air_factor = 10.0;
 const float vMin_threshold = 100;  // Minimum voltage (in mV) of the sensor used
                                    // in detecting if the sensor is connected
-
 unsigned int LPG_ppm = 0;
 
 LEDBlinker greenLED(GREEN_LED, 0, 0);
@@ -42,7 +44,7 @@ LEDBlinker buzzer(BUZZER_PIN, 0, 0);
 // DHT humidity/temperature sensor
 #include "DHT.h"
 #include "DHT_U.h"
-boolean errDHT11 = false;
+bool errDHT11 = false;
 // Uncomment whatever type you're using!
 //#define DHTTYPE DHT11     // DHT 11 
 #define DHTTYPE DHT22   // DHT 22  (AM2302)
@@ -188,8 +190,6 @@ void setup() {
   delay(1);
   pinMode(MQ6_PIN, INPUT); 
   delay(1);
-  pinMode(NPN_PIN, OUTPUT);
-  delay(1);
   
   greenLED.setHigh();
   redLED.setHigh();
@@ -230,7 +230,6 @@ void setup() {
   Serial.print("Warming up sensor for ");
   Serial.print(WARMUP_TIME_MS / 1000);
   Serial.print(" seconds...");
-  digitalWrite(NPN_PIN, HIGH);
 #endif
 
   unsigned long warmupTime = millis() + WARMUP_TIME_MS;
@@ -385,6 +384,7 @@ void loop() {
     #endif
     
     if (LPG_ppm > LPG_threshold) {
+      // Threshold reached
       alarmLPG = true;
     } else {
       alarmLPG = false;
@@ -419,7 +419,10 @@ void loop() {
       greenLED.setLow();
       redLED.setInterval(500, 1000);
       buzzer.setInterval(500, 1000);
-    } else if (alarmLPG == true) {
+
+      // TODO: Edge case, sensor gets disconnected when lpg alarm already sounding
+
+    } else if (alarmLPG == true || alarmLPG_latch == true) {
       // Sound alarm if gas threshold is exceeded
       #ifndef SERIAL_DEBUG_DISABLED
       Serial.println("LPG alarm");
@@ -427,7 +430,18 @@ void loop() {
 
       redLED.setHigh();
       greenLED.setHigh();
-      buzzer.setInterval(300, 500);
+      
+      // Check if this is the first sample above threshold
+      // If so, set the latch and record the time
+      if (!alarmLPG_latch) {
+        alarm_time = millis();
+        alarmLPG_latch = true;
+        buzzer.setInterval(300, 500);
+      } else if (millis() - alarm_time > alarm_timeout) {
+        // Alarm has been going for longer then the timeout so make it beep at a
+        // very slow rate and keep the red LED on
+        buzzer.setInterval(300, 90e3); // Beep every 90 seconds
+      }
 
       // Set the output pin high
       digitalWrite(DIGITAL_OUT, HIGH);
