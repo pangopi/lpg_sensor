@@ -1,70 +1,6 @@
-/*
-  LPG detection sensor
-  Author: J. Peterse
-  For Arduino pro mini (ATMEGA328P). Possilby works on other boards as well, but
-  not tested.
-
-  Based on code found on the net but I'm not able to find it again. Heavily
-  modified. Uses a temperature and humidity sensor to normalise the
-  measurements. Added a watchdog and detection of the presence of the gas
-  sensor. When the DHT temp/hum sensor is not found or in another way faulty a
-  gas calculation is still performed and the alarm will sound.
-
-  Features:
-  - Measures the presence of LPG in ppm
-  - Sound alarm when ppm threshold reached
-  - Outputs a TTL (5V) signal when gas threshols value is reached to communicate
-  with other sensors
-  - Green LED to indicate sensor is working and taking samples
-  - Red LED to indicate errors
-  - When an error occurs that prevents LPG measurements, the green LED will be
-  switched off, otherwise the green light will stay lit indicating valid samples
-  are still being taken.
-  - Watchdog timer (500ms)
-  - Chirp alarm and blink error LED on following errors:
-    - Gas sensor not found
-    - DHT temp/hum sensor not found
-
-  Operation indicators:
-  Green  Red   Alarm       State
-  Normal operational states
-  On     Off   None         Normal operation and taking and analysing samples
-  Slow   Off   None         Startup: Performing warmup and calibration
-  Alarm states
-  On     On    Fast         Gas over threshold detected
-  On     Fast  Chirp        Gas detected but under threshold
-  Error states
-  Off    On    Chirp        Gas sensor not detected or faulty
-  On     Slow  None         Temp/Hum sensor faulty (not critical)
-
-*/
-
-/*
-
-  MQ-6 LPG (propane, butane) Gas Sensor
-  
-  Sensor must be 'burned-in' for 24 hours prior to general use.
-  
-  After burn-in, regular use of the sensor consists of 
-  calibration in air without the presence of LPG.  
-  Therafter, the sensor needs to be warmed for 30 sec
-  prior to taking a reading.  
-  
-  This sketch checks for the presense of LPG constantly.  
-  (Note that if you only check say every 5 minutes, then you
-  may miss an incident).  A total of 500 samples are measured
-  from the sample and then the average is used.  This sampling
-  takes approximately 500 ms to complete.
-  
-  If the LPG threshold of 2000 ppm is exceeded, an alarm condition is
-  set and it persists until the device is reset.  
-  
-  The lower explosive limit for LPG is 1900 ppm for butane, and
-  2000 ppm for propane.  Human asphyxia occurs at 19000 ppm.
-  
-  The MQ-6 sensor heater is constantly on.  This heater consume a 
-  about 150 mA of current.
-*/
+// LPG detection sensor
+// For Arduino pro mini (ATMEGA328P). Possilby works on other boards as well, but
+// not tested.
 
 #include <Arduino.h>
 #include <avr/wdt.h>
@@ -73,7 +9,6 @@
 
 #define VERSION = 1.1
 // #define SERIAL_DEBUG_DISABLED
-
 #define GREEN_LED 5
 #define RED_LED 4
 #define BUZZER_PIN 3
