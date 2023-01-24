@@ -7,8 +7,8 @@
 
 #include "LEDBlinker.h"
 
-#define VERSION = 1.1
-// #define SERIAL_DEBUG_DISABLED
+#define VERSION = 1.2
+#define SERIAL_DEBUG_DISABLED
 #define GREEN_LED 5
 #define RED_LED 4
 #define BUZZER_PIN 3
@@ -18,12 +18,18 @@
 #define DIGITAL_OUT 12
 #define WARMUP_TIME_MS 90e3
 
+#define NOTE_A5 880
+#define NOTE_B5 988
+#define NOTE_C5 523
+#define NOTE_D5 587
+#define NOTE_E5 659
+
 bool alarmLPG = false;
 bool alarmLPG_latch = false;
 bool err_no_sensor = false;
 bool lower_threshold = false;
 unsigned long alarm_time = 0UL; // millis for storing when gas first detected
-unsigned long alarm_timeout = 8 * 3600e3; // 8 hours
+const unsigned long alarm_timeout = 8 * 3600e3; // 8 hours
 //  The lower explosive limit for LPG is 1900 ppm for butane, and
 //  2000 ppm for propane.
 const unsigned int LPG_threshold = 1900;
@@ -35,6 +41,10 @@ const float Ro_clean_air_factor = 10.0;
 const float vMin_threshold = 100;  // Minimum voltage (in mV) of the sensor used
                                    // in detecting if the sensor is connected
 unsigned int LPG_ppm = 0;
+int button_state = HIGH;
+int last_button_state = HIGH;
+unsigned long last_debounce_time = 0UL;
+const int debounce_delay = 50;
 
 LEDBlinker greenLED(GREEN_LED, 0, 0);
 LEDBlinker redLED(RED_LED, 0, 0);
@@ -60,6 +70,8 @@ DHT dht(DHT_PIN, DHTTYPE);
 float mV = 0.0;
 unsigned long samples = 0;
 const int maxSamples = 500;
+
+void(* resetFunc) (void) = 0;
 
 float RsRoAtAmbientTo20C65RH(float RsRo_atAmb, float ambTemp, float ambRH) {
   //  Using the datasheet for MQ-6 sensor, derive Rs/Ro values 
@@ -186,15 +198,20 @@ void setup() {
 #endif
 
   //  DEFAULT: analog reference of 5 volts on 5V Arduino boards 
-  analogReference(DEFAULT);
-  delay(1);
+  //analogReference(DEFAULT);
   pinMode(MQ6_PIN, INPUT); 
   delay(1);
-  
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  delay(1);
+
+  // Turn on all LEDs and the buzzer to check if working
   greenLED.setHigh();
   redLED.setHigh();
-  tone(BUZZER_PIN, 880, 800);
-
+  tone(BUZZER_PIN, NOTE_A5);
+  delay(140);
+  tone(BUZZER_PIN, NOTE_B5);
+  delay(80);
+  noTone(BUZZER_PIN);
 
 #ifndef SERIAL_DEBUG_DISABLED
   Serial.print("DHT");
@@ -287,9 +304,24 @@ void setup() {
   samples = 0;
   mV = 0.0;
 
-  tone(BUZZER_PIN, 880, 400);
+  tone(BUZZER_PIN, NOTE_A5);
+  delay(80);
+  tone(BUZZER_PIN, NOTE_B5);
+  delay(80);
+  tone(BUZZER_PIN, NOTE_C5);
+  delay(80);
+  tone(BUZZER_PIN, NOTE_B5);
+  delay(20);
+  tone(BUZZER_PIN, NOTE_C5);
+  delay(20);
+  tone(BUZZER_PIN, NOTE_D5);
+  delay(50);
+  tone(BUZZER_PIN, NOTE_B5);
+  delay(200);
+  noTone(BUZZER_PIN);
+
   // All setup steps are complete, enable WatchDogTimer
-  #ifdef SERIAL_DEBUG_DISABLED
+  #ifndef SERIAL_DEBUG_DISABLED
   wdt_enable(WDTO_500MS);
   #else
   wdt_enable(WDTO_2S);
@@ -298,8 +330,54 @@ void setup() {
 }
 
 void loop() {
-
+  
   wdt_reset();
+
+  button_state = digitalRead(BUTTON_PIN);
+
+  if (button_state != last_button_state) {
+    // Button has been pressed
+    last_debounce_time = millis();
+  }
+
+  if (millis() - last_debounce_time < debounce_delay && button_state == LOW) {
+    last_button_state = button_state;
+    last_debounce_time = 0;
+    // Reset button is pressed
+    #ifndef SERIAL_DEBUG_DISABLED
+    Serial.println("Reset Button Pressed");
+    #endif
+    if (alarmLPG_latch == true && alarmLPG == false) {
+      // Alarm is still active but no current gas detected, reset the alarm
+      alarmLPG_latch = false;
+      alarm_time = 0UL;
+      #ifndef SERIAL_DEBUG_DISABLED
+      Serial.println("Alarm cancelled by user");
+      #endif
+    } else if (alarmLPG_latch == true && alarmLPG == true) {
+      // Alarm is active and there is currently gas detected
+      // Silence the alarm as if an alarm timehout has occurred
+      alarm_time = millis() - alarm_timeout - 1;
+      #ifndef SERIAL_DEBUG_DISABLED
+      Serial.println("Alarm silenced by user");
+      #endif
+    } else {
+      // There is no current alarm, restart device
+      // First double check there's no LPG reading
+      // The device should not be reset when it's readin LPG
+      if (LPG_ppm > 20) {
+        #ifndef SERIAL_DEBUG_DISABLED
+        Serial.println("LPG detected, no reset allowed!");
+        #endif
+        tone(BUZZER_PIN, 880, 1000);
+      } else {
+        #ifndef SERIAL_DEBUG_DISABLED
+        delay(200);
+        #endif
+        resetFunc();
+      }
+    }
+  }
   
   if (samples < maxSamples) {
     // Collect a new sample
@@ -400,12 +478,16 @@ void loop() {
     mV = 0.0;
 
     // Check if the LEDS are still connected
-    // if (!check_led_connected(GREEN_LED)) {
-    //   Serial.println("Green LED not connected!");
-    // }
-    // if (!check_led_connected(RED_LED)) {
-    //   Serial.println("Red LED not connected!");
-    // }
+    if (!check_led_connected(GREEN_LED)) {
+#ifndef SERIAL_DEBUG_DISABLED
+      Serial.println("Green LED not connected!");
+#endif
+    }
+    if (!check_led_connected(RED_LED)) {
+#ifndef SERIAL_DEBUG_DISABLED
+      Serial.println("Red LED not connected!");
+#endif
+    }
 
     if (err_no_sensor) {
       // If not sensor detected then there are no samples taken and so no LPG
@@ -424,25 +506,36 @@ void loop() {
 
     } else if (alarmLPG == true || alarmLPG_latch == true) {
       // Sound alarm if gas threshold is exceeded
-      #ifndef SERIAL_DEBUG_DISABLED
-      Serial.println("LPG alarm");
-      #endif
 
       redLED.setHigh();
       greenLED.setHigh();
       
+      #ifndef SERIAL_DEBUG_DISABLED
+      if (alarmLPG) {
+        Serial.println("LPG currently over threshold");
+      } else if (alarmLPG_latch) {
+        Serial.println("LPG alarm latch active (LPG detected in the past)");
+      }
+      #endif
+
       // Check if this is the first sample above threshold
       // If so, set the latch and record the time
       if (!alarmLPG_latch) {
         alarm_time = millis();
         alarmLPG_latch = true;
         buzzer.setInterval(300, 500);
+        #ifndef SERIAL_DEBUG_DISABLED
+        Serial.println("LPG alarm latched");
+        #endif
       } else if (millis() - alarm_time > alarm_timeout) {
         // Alarm has been going for longer then the timeout so make it beep at a
         // very slow rate and keep the red LED on
-        buzzer.setInterval(300, 90e3); // Beep every 90 seconds
+        buzzer.setInterval(1000, 90e3); // Beep every 90 seconds
+        #ifndef SERIAL_DEBUG_DISABLED
+        Serial.println("LPG alarm silenced");
+        #endif
       }
-
+      
       // Set the output pin high
       digitalWrite(DIGITAL_OUT, HIGH);
     } else if (lower_threshold == true) {
