@@ -8,7 +8,7 @@
 #include "LEDBlinker.h"
 
 #define VERSION = 1.2
-#define SERIAL_DEBUG_DISABLED
+//define SERIAL_DEBUG_DISABLED
 #define GREEN_LED 5
 #define RED_LED 4
 #define BUZZER_PIN 3
@@ -26,11 +26,15 @@
 
 bool alarmLPG = false;          // Currently detecting LPG
 bool alarmLPG_latch = false;    // Alarm in latched state
-bool err_no_sensor = false;     // Gas sensor detected
 bool lower_threshold = false;   // Bool lower LPG threshold reached
 bool alarm_silenced = false;    // Alarm silenced state
+bool err_no_sensor = false;     // Gas sensor detected
 unsigned long alarm_time = 0UL; // millis for storing when gas first detected
-const unsigned long alarm_timeout = 8 * 3600e3; // 8 hours
+unsigned long alarm_time_last = 0UL; // millis for when gas was last detected
+const unsigned long alarm_timeout = 8 * 3600e3; // 8 hourso
+unsigned long calibration_time = 0UL; // Last time sensor calibrated
+const unsigned long calibration_timer = 1800e3; // 30 minutes
+bool recalibration_done = false; // Record if recalibration is done
 //  The lower explosive limit for LPG is 1900 ppm for butane, and
 //  2000 ppm for propane.
 const unsigned int LPG_threshold = 1900;
@@ -55,7 +59,7 @@ LEDBlinker buzzer(BUZZER_PIN, 0, 0);
 // DHT humidity/temperature sensor
 #include "DHT.h"
 #include "DHT_U.h"
-bool errDHT11 = false;
+bool errDHT = false;
 // Uncomment whatever type you're using!
 //#define DHTTYPE DHT11     // DHT 11 
 #define DHTTYPE DHT22   // DHT 22  (AM2302)
@@ -187,6 +191,58 @@ bool check_led_connected(int pin) {
   return true;
 }
 
+bool calibrate_MQ6() {
+
+  // Get the Vcc accurately
+  double Vcc = readVcc()/1000.0;
+
+#ifndef SERIAL_DEBUG_DISABLED
+  Serial.print("Vcc measured at: ");
+  Serial.print(Vcc);
+  Serial.println(" V");
+#endif
+
+  greenLED.setPulse(150, 1000);
+
+  //  take a reading..
+  for(int i = maxSamples; i > 0; i--){
+    greenLED.tick();
+    mV += Get_mVfromADC(MQ6_PIN);
+    samples += 1;
+    wdt_reset();
+  }
+
+  mV = mV / (float) samples;
+  #ifndef SERIAL_DEBUG_DISABLED
+  Serial.print("  avg A");
+  Serial.print(MQ6_PIN);
+  Serial.print(" for ");
+  Serial.print(samples);
+  Serial.print(" samples = ");
+  Serial.print(mV);
+  Serial.println(" mV");
+  Serial.print("  Rs = ");
+  Serial.println(CalcRsFromVo(mV));
+  #endif
+  //  Conv output to Ro
+  //  Ro = calibration factor for measurement in clean air.
+  //  Ro = ((vRef - mV) * RL) / (mV * Ro_clean_air_factor);
+  //  Hereafter, measure the sensor output, convert to Rs, and
+  //  then calculate Rs/Ro using: Rs = ((Vc-Vo)*RL) / Vo
+  Ro = CalcRsFromVo(mV) / Ro_clean_air_factor;
+  #ifndef SERIAL_DEBUG_DISABLED
+  Serial.print("  Ro = ");
+  Serial.println(Ro);
+  Serial.println("Sensor calibration in clean air complete.");
+  Serial.println("Setup complete. Constantly monitoring for LPG...");
+  #endif
+  samples = 0;
+  mV = 0.0;
+  calibration_time = millis();
+
+  return true;
+}
+
 
 void setup() {
 
@@ -220,7 +276,7 @@ void setup() {
   Serial.println(" setup");
 #endif
   dht.begin();
-  //  Get the ambient conditions (deg C & relative humidity) from DHT11
+  //  Get the ambient conditions (deg C & relative humidity) from DHT
   float ambRH = dht.readHumidity();
   float ambTemp = dht.readTemperature();
   // check if returns are valid, if they are NaN (not a number) then something
@@ -230,7 +286,7 @@ void setup() {
     Serial.println("Failed to read from DHT");
     Serial.println("  ");
 #endif
-    errDHT11 = true;
+    errDHT = true;
   } else {
     //  DHT ok, .. proceed.
 #ifndef SERIAL_DEBUG_DISABLED
@@ -262,49 +318,9 @@ void setup() {
   Serial.println(" Warmup complete. Starting calibration ...");
 #endif
 
-  // Get the Vcc accurately
-  double Vcc = readVcc()/1000.0;
-#ifndef SERIAL_DEBUG_DISABLED
-  Serial.print("Vcc measured at: ");
-  Serial.print(Vcc);
-  Serial.println(" V");
-#endif
+  calibrate_MQ6();
 
-  //  take a reading..
-  for(int i = 30; i > 0; i--){
-    greenLED.tick();
-    mV += Get_mVfromADC(MQ6_PIN);
-    samples += 1;
-    wdt_reset();
-  }
-
-  mV = mV / (float) samples;
-  #ifndef SERIAL_DEBUG_DISABLED
-  Serial.print("  avg A");
-  Serial.print(MQ6_PIN);
-  Serial.print(" for ");
-  Serial.print(samples);
-  Serial.print(" samples = ");
-  Serial.print(mV);
-  Serial.println(" mV");
-  Serial.print("  Rs = ");
-  Serial.println(CalcRsFromVo(mV));
-  #endif
-  //  Conv output to Ro
-  //  Ro = calibration factor for measurement in clean air.
-  //  Ro = ((vRef - mV) * RL) / (mV * Ro_clean_air_factor);
-  //  Hereafter, measure the sensor output, convert to Rs, and
-  //  then calculate Rs/Ro using: Rs = ((Vc-Vo)*RL) / Vo
-  Ro = CalcRsFromVo(mV) / Ro_clean_air_factor;
-  #ifndef SERIAL_DEBUG_DISABLED
-  Serial.print("  Ro = ");
-  Serial.println(Ro);
-  Serial.println("Sensor calibration in clean air complete.");
-  Serial.println("Setup complete. Constantly monitoring for LPG...");
-  #endif
-  samples = 0;
-  mV = 0.0;
-
+  // Play a tone to indicate calibration is succesful
   tone(BUZZER_PIN, NOTE_A5);
   delay(80);
   tone(BUZZER_PIN, NOTE_B5);
@@ -385,6 +401,23 @@ void loop() {
       }
     }
   }
+
+  if (millis() - calibration_time > calibration_timer && !recalibration_done) {
+    // After some runtime, recalibrate the sensor
+    // This is to give a long run in time to make sure the sensor is properly
+    // warmed up
+    if (millis() - alarm_time_last >= calibration_timer) {
+      // If gas was detected in the time between the initial calibration then
+      // don't recalibrate just yet. Wait until no gas has been detected for 30
+      // minutes at least.
+      #ifndef SERIAL_DEBUG_DISABLED
+      Serial.println("Recalibrating ...");
+      #endif
+      if (calibrate_MQ6()) {
+        recalibration_done = true;
+      }
+    }
+  }
   
   if (samples < maxSamples) {
     // Collect a new sample
@@ -437,14 +470,14 @@ void loop() {
       #ifndef SERIAL_DEBUG_DISABLED
       Serial.println(" - Failed to read from DHT.");
       #endif
-      errDHT11 = true;
+      errDHT = true;
       // Establish a reading without correcting for temperature and humidity
       // Assume 20 degrees and 65% RH (the sensor's standard values)
       LPG_ppm = GetLpgPpmForRatioRsRo(RsRo_atAmb);
       // digitalWrite(pinNPN, LOW);
     } else {
       //  DHT ok, .. proceed.
-      errDHT11 = false;
+      errDHT = false;
       float measured_RsRo_at_20C65RH =
           RsRoAtAmbientTo20C65RH(RsRo_atAmb, ambTemp, ambRH);
 
@@ -471,6 +504,7 @@ void loop() {
     if (LPG_ppm > LPG_threshold) {
       // Threshold reached
       alarmLPG = true;
+      alarm_time_last = millis();
     } else {
       alarmLPG = false;
       // No alarm but check for lower threshold
@@ -561,7 +595,7 @@ void loop() {
       } else {
         buzzer.setInterval(150, 3000);
       }
-    } else if (errDHT11 == true) {
+    } else if (errDHT == true) {
       // Only give the error that the temp/hum sensor isn't working when there
       // is no LPG detected. Otherwise the LPG alarm is sounded.
       #ifndef SERIAL_DEBUG_DISABLED
