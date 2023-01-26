@@ -43,6 +43,10 @@ void LEDBlinker::setInterval(unsigned long onInterval, unsigned long offInterval
   _offInterval = offInterval;
 }
 
+void LEDBlinker::setPulse(unsigned long pulse_ms, unsigned long pulseEvery_ms = 1000) {
+  setInterval(pulse_ms, pulseEvery_ms - pulse_ms);
+}
+
 void LEDBlinker::tick() {
   unsigned long currentMillis = millis();
 

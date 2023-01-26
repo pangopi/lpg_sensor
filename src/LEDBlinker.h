@@ -17,6 +17,7 @@ class LEDBlinker {
   void setHigh();
   void setLow();
   void setInterval(unsigned long onInterval, unsigned long offInterval);
+  void setPulse(unsigned long pulse_ms, unsigned long pulseEvery_ms = 1000);
   void tick();
 };
 
