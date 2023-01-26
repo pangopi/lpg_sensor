@@ -22,10 +22,13 @@ Green | Red | Alarm | State
 --- | --- | --- | ---
 On |   Off  | None  | Normal operation and taking and analysing samples
 Slow | Off  | None  | Startup: Performing warmup and calibration
+On   | Off  | Tone  | Startup: Calibration finished
+Slow | Off  | None  | Recalibating sensor
 On   | On   | Fast  | Gas detected over threshold
-On   | On   | None  | Gas detected, alarm silenced
+On   | On   | Beep every 90s  | Gas detected over threshold, alarm silenced
 On   | Fast | Chirp | Gas detected but under threshold
-Off  | On   | Chirp | Gas sensor not detected or faulty
+On   | Fast | Chirp every 90s | Gas detected under threshold, alarm silenced
+Off  | On   | Chirp | Gas sensor not detected or faulty (cannot be silenced)
 On   | Slow | None  | Temp/Hum sensor faulty (not critical)
 
 ## Planned features
